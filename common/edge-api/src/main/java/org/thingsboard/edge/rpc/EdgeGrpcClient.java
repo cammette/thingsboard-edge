@@ -21,6 +21,7 @@ import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
 import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
 import io.grpc.netty.shaded.io.netty.handler.ssl.SslContextBuilder;
 import io.grpc.stub.StreamObserver;
+import io.grpc.Status;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -59,6 +60,8 @@ public class EdgeGrpcClient implements EdgeRpcClient {
     private int rpcPort;
     @Value("${cloud.rpc.timeout}")
     private int timeoutSecs;
+    @Value("${cloud.rpc.targets:}")
+    private String rpcTargets;
     @Value("${cloud.rpc.keep_alive_time_sec:10}")
     private int keepAliveTimeSec;
     @Value("${cloud.rpc.keep_alive_timeout_sec:5}")
@@ -88,6 +91,8 @@ public class EdgeGrpcClient implements EdgeRpcClient {
 
     private static final ReentrantLock uplinkMsgLock = new ReentrantLock();
 
+    private volatile CloudRpcTargetProvider targetProvider;
+
     @Override
     public void connect(String edgeKey,
                         String edgeSecret,
@@ -95,7 +100,9 @@ public class EdgeGrpcClient implements EdgeRpcClient {
                         Consumer<EdgeConfiguration> onEdgeUpdate,
                         Consumer<DownlinkMsg> onDownlink,
                         Consumer<Exception> onError) {
-        NettyChannelBuilder builder = NettyChannelBuilder.forAddress(rpcHost, rpcPort)
+        CloudRpcTargetProvider provider = getTargetProvider();
+        CloudRpcTargetProvider.HostPort target = provider.current();
+        NettyChannelBuilder builder = NettyChannelBuilder.forAddress(target.getHost(), target.getPort())
                 .maxInboundMessageSize(maxInboundMessageSize)
                 .keepAliveTime(keepAliveTimeSec, TimeUnit.SECONDS)
                 .keepAliveTimeout(keepAliveTimeoutSec, TimeUnit.SECONDS)
@@ -129,7 +136,11 @@ public class EdgeGrpcClient implements EdgeRpcClient {
 
         channel = builder.build();
         EdgeRpcServiceGrpc.EdgeRpcServiceStub stub = EdgeRpcServiceGrpc.newStub(channel);
-        log.info("[{}] Sending a connect request to the TB!", edgeKey);
+        if (provider.hasMultipleTargets()) {
+            log.info("[{}] Sending a connect request to the TB at target {}", edgeKey, target);
+        } else {
+            log.info("[{}] Sending a connect request to the TB!", edgeKey);
+        }
         this.inputStream = stub.withCompression("gzip").handleMsgs(initOutputStream(edgeKey, onUplinkResponse, onEdgeUpdate, onDownlink, onError));
         this.inputStream.onNext(RequestMsg.newBuilder()
                 .setMsgType(RequestMsgType.CONNECT_RPC_MESSAGE)
@@ -140,6 +151,20 @@ public class EdgeGrpcClient implements EdgeRpcClient {
                         .setMaxInboundMessageSize(maxInboundMessageSize)
                         .build())
                 .build());
+    }
+
+    private CloudRpcTargetProvider getTargetProvider() {
+        if (targetProvider == null) {
+            synchronized (this) {
+                if (targetProvider == null) {
+                    targetProvider = CloudRpcTargetProvider.fromConfig(rpcTargets, rpcHost, rpcPort);
+                    if (targetProvider.hasMultipleTargets()) {
+                        log.info("Cloud RPC targets configured: {}", targetProvider.getTargets());
+                    }
+                }
+            }
+        }
+        return targetProvider;
     }
 
     private StreamObserver<ResponseMsg> initOutputStream(String edgeKey,
@@ -160,6 +185,9 @@ public class EdgeGrpcClient implements EdgeRpcClient {
                         log.info("[{}] Configuration received: {}", edgeKey, connectResponseMsg.getConfiguration());
                         onEdgeUpdate.accept(connectResponseMsg.getConfiguration());
                     } else {
+                        if (connectResponseMsg.getResponseCode().equals(ConnectResponseCode.SERVER_UNAVAILABLE)) {
+                            rotateTarget(edgeKey, "SERVER_UNAVAILABLE");
+                        }
                         log.error("[{}] Failed to establish the connection! Code: {}. Error message: {}.", edgeKey, connectResponseMsg.getResponseCode(), connectResponseMsg.getErrorMsg());
                         try {
                             EdgeGrpcClient.this.disconnect(true);
@@ -183,6 +211,9 @@ public class EdgeGrpcClient implements EdgeRpcClient {
             @Override
             public void onError(Throwable t) {
                 log.warn("[{}] Stream was terminated due to error:", edgeKey, t);
+                if (isRetryableGrpcError(t)) {
+                    rotateTarget(edgeKey, Status.fromThrowable(t).getCode().name());
+                }
                 try {
                     EdgeGrpcClient.this.disconnect(true);
                 } catch (InterruptedException e) {
@@ -272,6 +303,23 @@ public class EdgeGrpcClient implements EdgeRpcClient {
         } finally {
             uplinkMsgLock.unlock();
         }
+    }
+
+    private void rotateTarget(String edgeKey, String reason) {
+        CloudRpcTargetProvider provider = getTargetProvider();
+        if (!provider.hasMultipleTargets()) {
+            return;
+        }
+        CloudRpcTargetProvider.HostPort previous = provider.current();
+        CloudRpcTargetProvider.HostPort next = provider.rotate();
+        if (!previous.equals(next)) {
+            log.warn("[{}] Switching cloud RPC target from {} to {} due to {}.", edgeKey, previous, next, reason);
+        }
+    }
+
+    private boolean isRetryableGrpcError(Throwable t) {
+        Status.Code code = Status.fromThrowable(t).getCode();
+        return code == Status.Code.UNAVAILABLE || code == Status.Code.DEADLINE_EXCEEDED;
     }
 
 }
