@@ -115,6 +115,9 @@ cloud:
   # Timeout in seconds for packaging uplink data to the cloud
   uplink_pack_timeout_sec: "${CLOUD_UPLINK_PACK_TIMEOUT_SEC:60}"
   rpc:
+    # Optional comma-separated list of cloud RPC targets (host[:port]).
+    # If set, overrides host/port values below for failover between targets.
+    targets: "${CLOUD_RPC_TARGETS:}"
     # Hostname or IP of the ThingsBoard platform, e.g. thingsboard.cloud, demo.thingsboard.io, X.X.X.X or localhost
     host: "${CLOUD_RPC_HOST:localhost}"
     # Port for RPC communication with the ThingsBoard server

@@ -54,6 +54,7 @@ services:
       CLOUD_ROUTING_KEY: "${CLOUD_ROUTING_KEY}"
       CLOUD_ROUTING_SECRET: "${CLOUD_ROUTING_SECRET}"
       CLOUD_RPC_HOST: "${CLOUD_RPC_HOST}"
+      CLOUD_RPC_TARGETS: "${CLOUD_RPC_TARGETS}"
       CLOUD_RPC_PORT: "${CLOUD_RPC_PORT}"
     env_file:
       - tb-edge.env
@@ -81,6 +82,7 @@ services:
       CLOUD_ROUTING_KEY: "${CLOUD_ROUTING_KEY}"
       CLOUD_ROUTING_SECRET: "${CLOUD_ROUTING_SECRET}"
       CLOUD_RPC_HOST: "${CLOUD_RPC_HOST}"
+      CLOUD_RPC_TARGETS: "${CLOUD_RPC_TARGETS}"
       CLOUD_RPC_PORT: "${CLOUD_RPC_PORT}"
     env_file:
       - tb-edge.env
@@ -108,6 +110,7 @@ services:
       CLOUD_ROUTING_KEY: "${CLOUD_ROUTING_KEY}"
       CLOUD_ROUTING_SECRET: "${CLOUD_ROUTING_SECRET}"
       CLOUD_RPC_HOST: "${CLOUD_RPC_HOST}"
+      CLOUD_RPC_TARGETS: "${CLOUD_RPC_TARGETS}"
       CLOUD_RPC_PORT: "${CLOUD_RPC_PORT}"
     env_file:
       - tb-edge.env
