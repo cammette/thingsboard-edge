@@ -32,6 +32,12 @@
       </mat-option>
     </mat-select>
   </mat-form-field>
+  <tb-string-items-list class="mat-block"
+                        [label]="'rule-node-config.addresses' | translate"
+                        [placeholder]="'rule-node-config.addresses-placeholder' | translate"
+                        [hint]="'rule-node-config.addresses-hint' | translate"
+                        formControlName="addresses">
+  </tb-string-items-list>
   <div class="gt-sm:flex gt-sm:flex-row gt-sm:gap-2">
     <mat-form-field class="mat-block gt-sm:max-w-60% gt-sm:flex-full">
       <mat-label translate>rule-node-config.host</mat-label>
