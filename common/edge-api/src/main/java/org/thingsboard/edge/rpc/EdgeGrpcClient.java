@@ -17,6 +17,7 @@ package org.thingsboard.edge.rpc;
 
 import io.grpc.HttpConnectProxiedSocketAddress;
 import io.grpc.ManagedChannel;
+import io.grpc.Status;
 import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
 import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
 import io.grpc.netty.shaded.io.netty.handler.ssl.SslContextBuilder;
@@ -197,7 +198,7 @@ public class EdgeGrpcClient implements EdgeRpcClient {
 
             @Override
             public void onError(Throwable t) {
-                log.warn("[{}] Stream was terminated due to error:", edgeKey, t);
+                logStreamTermination(edgeKey, t);
                 try {
                     EdgeGrpcClient.this.disconnect(true);
                 } catch (InterruptedException e) {
@@ -211,6 +212,21 @@ public class EdgeGrpcClient implements EdgeRpcClient {
                 log.info("[{}] Stream was closed and completed successfully!", edgeKey);
             }
         };
+    }
+
+    private void logStreamTermination(String edgeKey, Throwable t) {
+        Status status = Status.fromThrowable(t);
+        if (status.getCode() == Status.Code.CANCELLED) {
+            String description = status.getDescription();
+            if (StringUtils.isNotEmpty(description)) {
+                log.info("[{}] Stream was cancelled: {}", edgeKey, description);
+            } else {
+                log.info("[{}] Stream was cancelled.", edgeKey);
+            }
+            log.debug("[{}] Stream cancellation stacktrace", edgeKey, t);
+            return;
+        }
+        log.warn("[{}] Stream was terminated due to error:", edgeKey, t);
     }
 
     @Override
