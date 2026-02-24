@@ -21,6 +21,7 @@ import com.rabbitmq.client.Channel;
 import com.rabbitmq.client.Connection;
 import com.rabbitmq.client.ConnectionFactory;
 import com.rabbitmq.client.MessageProperties;
+import com.rabbitmq.client.Address;
 import lombok.extern.slf4j.Slf4j;
 import org.thingsboard.rule.engine.api.RuleNode;
 import org.thingsboard.rule.engine.api.TbContext;
@@ -35,6 +36,9 @@ import org.thingsboard.server.common.msg.TbMsgMetaData;
 
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 
 import static org.thingsboard.common.util.DonAsynchron.withCallback;
 
@@ -70,7 +74,8 @@ public class TbRabbitMqNode extends TbAbstractExternalNode {
         this.config = TbNodeUtils.convert(configuration, TbRabbitMqNodeConfiguration.class);
         ConnectionFactory factory = getConnectionFactory();
         try {
-            this.connection = factory.newConnection();
+            List<Address> addresses = resolveAddresses();
+            this.connection = addresses.isEmpty() ? factory.newConnection() : factory.newConnection(addresses);
             this.channel = this.connection.createChannel();
         } catch (Exception e) {
             throw new TbNodeException(e);
@@ -85,17 +90,56 @@ public class TbRabbitMqNode extends TbAbstractExternalNode {
                 t -> tellFailure(ctx, processException(tbMsg, t), t));
     }
 
-    ConnectionFactory getConnectionFactory() {
+    public ConnectionFactory getConnectionFactory() {
         ConnectionFactory factory = new ConnectionFactory();
-        factory.setHost(this.config.getHost());
-        factory.setPort(this.config.getPort());
         factory.setVirtualHost(this.config.getVirtualHost());
         factory.setUsername(this.config.getUsername());
         factory.setPassword(this.config.getPassword());
         factory.setAutomaticRecoveryEnabled(this.config.isAutomaticRecoveryEnabled());
+
+        List<Address> addresses = resolveAddresses();
+        boolean hasAddresses = !addresses.isEmpty();
+
+        if (!hasAddresses){
+            factory.setHost(this.config.getHost());
+            factory.setPort(this.config.getPort());
+        }
+        // Read topology recovery enabled from client properties
+        String topologyRecovery = this.config.getClientProperties().get("topologyRecoveryEnabled");
+        if (topologyRecovery != null) {
+            factory.setTopologyRecoveryEnabled(Boolean.parseBoolean(topologyRecovery));
+        } else if (hasAddresses) {
+            factory.setTopologyRecoveryEnabled(true);
+        }
+
+        // Read requested heartbeat from client properties
+        String heartbeat = this.config.getClientProperties().get("requestedHeartbeat");
+        if (heartbeat != null) {
+            factory.setRequestedHeartbeat(Integer.parseInt(heartbeat));
+        } else if (hasAddresses) {
+            factory.setRequestedHeartbeat(30);
+        }
+
+        // Read network recovery interval from client properties
+        String networkRecovery = this.config.getClientProperties().get("networkRecoveryInterval");
+        if (networkRecovery != null) {
+            factory.setNetworkRecoveryInterval(Integer.parseInt(networkRecovery));
+        } else if (hasAddresses) {
+            factory.setNetworkRecoveryInterval(5000);
+        }
+
         factory.setConnectionTimeout(this.config.getConnectionTimeout());
         factory.setHandshakeTimeout(this.config.getHandshakeTimeout());
-        this.config.getClientProperties().forEach((k, v) -> factory.getClientProperties().put(k, v));
+
+        // Set client properties, excluding the ones that are already handled separately
+        this.config.getClientProperties().forEach((k, v) -> {
+            if (!k.equals("addresses") &&
+                    !k.equals("topologyRecoveryEnabled") &&
+                    !k.equals("requestedHeartbeat") &&
+                    !k.equals("networkRecoveryInterval")) {
+                factory.getClientProperties().put(k, v);
+            }
+        });
         return factory;
     }
 
@@ -123,6 +167,43 @@ public class TbRabbitMqNode extends TbAbstractExternalNode {
                 msg.getData().getBytes(UTF8));
         return msg;
     }
+
+    private List<Address> resolveAddresses() {
+        String addressesStr = this.config.getClientProperties().get("addresses");
+        if (StringUtils.isEmpty(addressesStr)) {
+            return Collections.emptyList();
+        }
+
+        List<Address> addresses = new ArrayList<>();
+        String[] addressArray = addressesStr.split(",");
+        for (String address : addressArray) {
+            if (StringUtils.isEmpty(address)) {
+                continue;
+            }
+            String trimmedAddress = address.trim();
+            String[] hostPort = trimmedAddress.split(":");
+            if (hostPort.length != 2) {
+                throw new RuntimeException("Invalid RabbitMQ address '" + address + "'. Expected format 'host:port'.");
+            }
+            String host = hostPort[0].trim();
+            String portValue = hostPort[1].trim();
+            if (StringUtils.isEmpty(host) || StringUtils.isEmpty(portValue)) {
+                throw new RuntimeException("Invalid RabbitMQ address '" + address + "'. Expected format 'host:port'.");
+            }
+            int port;
+            try {
+                port = Integer.parseInt(portValue);
+            } catch (NumberFormatException e) {
+                throw new RuntimeException("Invalid port in RabbitMQ address '" + address + "'.");
+            }
+            addresses.add(new Address(host, port));
+        }
+        if (addresses.isEmpty()) {
+            log.info("the rabbitmq multi-hosts is {}",addresses);
+        }
+        return addresses.isEmpty() ? Collections.emptyList() : addresses;
+    }
+
 
     private TbMsg processException(TbMsg origMsg, Throwable t) {
         TbMsgMetaData metaData = origMsg.getMetaData().copy();
