@@ -51,6 +51,7 @@ export class RabbitMqConfigComponent extends RuleNodeConfigurationComponent {
       exchangeNamePattern: [configuration ? configuration.exchangeNamePattern : null, []],
       routingKeyPattern: [configuration ? configuration.routingKeyPattern : null, []],
       messageProperties: [configuration ? configuration.messageProperties : null, []],
+      addresses: [configuration ? configuration.addresses : [], []],
       host: [configuration ? configuration.host : null, [Validators.required]],
       port: [configuration ? configuration.port : null, [Validators.required, Validators.min(1), Validators.max(65535)]],
       virtualHost: [configuration ? configuration.virtualHost : null, []],
@@ -61,5 +62,22 @@ export class RabbitMqConfigComponent extends RuleNodeConfigurationComponent {
       handshakeTimeout: [configuration ? configuration.handshakeTimeout : null, [Validators.min(0)]],
       clientProperties: [configuration ? configuration.clientProperties : null, []]
     });
+  }
+
+  protected updateValidators(emitEvent: boolean) {
+    const addresses = this.rabbitMqConfigForm.get('addresses').value as string[] | null;
+    const hasAddresses = Array.isArray(addresses) && addresses.length > 0;
+    const hostValidators = hasAddresses ? [] : [Validators.required];
+    const portValidators = hasAddresses
+      ? [Validators.min(1), Validators.max(65535)]
+      : [Validators.required, Validators.min(1), Validators.max(65535)];
+    this.rabbitMqConfigForm.get('host').setValidators(hostValidators);
+    this.rabbitMqConfigForm.get('port').setValidators(portValidators);
+    this.rabbitMqConfigForm.get('host').updateValueAndValidity({emitEvent});
+    this.rabbitMqConfigForm.get('port').updateValueAndValidity({emitEvent});
+  }
+
+  protected validatorTriggers(): string[] {
+    return ['addresses'];
   }
 }

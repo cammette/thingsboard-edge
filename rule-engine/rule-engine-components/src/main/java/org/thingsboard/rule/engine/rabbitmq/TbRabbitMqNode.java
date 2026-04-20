@@ -17,6 +17,7 @@ package org.thingsboard.rule.engine.rabbitmq;
 
 import com.google.common.util.concurrent.ListenableFuture;
 import com.rabbitmq.client.AMQP;
+import com.rabbitmq.client.Address;
 import com.rabbitmq.client.Channel;
 import com.rabbitmq.client.Connection;
 import com.rabbitmq.client.ConnectionFactory;
@@ -35,6 +36,9 @@ import org.thingsboard.server.common.msg.TbMsgMetaData;
 
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 
 import static org.thingsboard.common.util.DonAsynchron.withCallback;
 
@@ -70,7 +74,8 @@ public class TbRabbitMqNode extends TbAbstractExternalNode {
         this.config = TbNodeUtils.convert(configuration, TbRabbitMqNodeConfiguration.class);
         ConnectionFactory factory = getConnectionFactory();
         try {
-            this.connection = factory.newConnection();
+            List<Address> addresses = resolveAddresses();
+            this.connection = addresses.isEmpty() ? factory.newConnection() : factory.newConnection(addresses);
             this.channel = this.connection.createChannel();
         } catch (Exception e) {
             throw new TbNodeException(e);
@@ -93,10 +98,58 @@ public class TbRabbitMqNode extends TbAbstractExternalNode {
         factory.setUsername(this.config.getUsername());
         factory.setPassword(this.config.getPassword());
         factory.setAutomaticRecoveryEnabled(this.config.isAutomaticRecoveryEnabled());
+        boolean hasAddresses = this.config.getAddresses() != null
+                && this.config.getAddresses().stream().anyMatch(StringUtils::isNotBlank);
+        if (this.config.getTopologyRecoveryEnabled() != null) {
+            factory.setTopologyRecoveryEnabled(this.config.getTopologyRecoveryEnabled());
+        } else if (hasAddresses) {
+            factory.setTopologyRecoveryEnabled(true);
+        }
+        if (this.config.getRequestedHeartbeat() != null) {
+            factory.setRequestedHeartbeat(this.config.getRequestedHeartbeat());
+        } else if (hasAddresses) {
+            factory.setRequestedHeartbeat(30);
+        }
+        if (this.config.getNetworkRecoveryInterval() != null) {
+            factory.setNetworkRecoveryInterval(this.config.getNetworkRecoveryInterval());
+        } else if (hasAddresses) {
+            factory.setNetworkRecoveryInterval(5000);
+        }
         factory.setConnectionTimeout(this.config.getConnectionTimeout());
         factory.setHandshakeTimeout(this.config.getHandshakeTimeout());
         this.config.getClientProperties().forEach((k, v) -> factory.getClientProperties().put(k, v));
         return factory;
+    }
+
+    private List<Address> resolveAddresses() throws TbNodeException {
+        List<String> configuredAddresses = this.config.getAddresses();
+        if (configuredAddresses == null || configuredAddresses.isEmpty()) {
+            return Collections.emptyList();
+        }
+        List<Address> addresses = new ArrayList<>();
+        for (String address : configuredAddresses) {
+            if (StringUtils.isEmpty(address)) {
+                continue;
+            }
+            String trimmedAddress = address.trim();
+            String[] hostPort = trimmedAddress.split(":");
+            if (hostPort.length != 2) {
+                throw new TbNodeException("Invalid RabbitMQ address '" + address + "'. Expected format 'host:port'.");
+            }
+            String host = hostPort[0].trim();
+            String portValue = hostPort[1].trim();
+            if (StringUtils.isEmpty(host) || StringUtils.isEmpty(portValue)) {
+                throw new TbNodeException("Invalid RabbitMQ address '" + address + "'. Expected format 'host:port'.");
+            }
+            int port;
+            try {
+                port = Integer.parseInt(portValue);
+            } catch (NumberFormatException e) {
+                throw new TbNodeException("Invalid port in RabbitMQ address '" + address + "'.", e);
+            }
+            addresses.add(new Address(host, port));
+        }
+        return addresses.isEmpty() ? Collections.emptyList() : addresses;
     }
 
     private ListenableFuture<TbMsg> publishMessageAsync(TbContext ctx, TbMsg msg) {
